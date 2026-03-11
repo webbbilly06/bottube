@@ -661,12 +661,16 @@ class TestIssue360Authorization(TestCase):
         self.assertEqual(len(alice_report["runs"]), 1)
         self.assertEqual(alice_report["runs"][0]["run_id"], alice_run)
         self.assertEqual(alice_report["scope"], "agent")
+        self.assertEqual(alice_report["summary"]["total_runs"], 1)
+        self.assertEqual(alice_report["summary"]["platforms"]["x"]["count"], 1)
 
         # Agent-scoped report (agent_id=2) should only see Bob's run
         bob_report = self.generator.generate_daily_report(today, agent_id=2)
         self.assertEqual(len(bob_report["runs"]), 1)
         self.assertEqual(bob_report["runs"][0]["run_id"], bob_run)
         self.assertEqual(bob_report["scope"], "agent")
+        self.assertEqual(bob_report["summary"]["total_runs"], 1)
+        self.assertEqual(bob_report["summary"]["platforms"]["moltbook"]["count"], 1)
 
     def test_report_scoping_weekly(self):
         """Test weekly report scoping by agent."""
@@ -692,6 +696,8 @@ class TestIssue360Authorization(TestCase):
         self.assertEqual(alice_report["scope"], "agent")
         # Agent-scoped report should not include top_agents
         self.assertEqual(alice_report.get("top_agents"), [])
+        self.assertEqual(len(alice_report["daily_breakdown"]), 1)
+        self.assertEqual(alice_report["daily_breakdown"][0]["total_runs"], 1)
 
     def test_report_scoping_outbound(self):
         """Test outbound report scoping by agent."""

@@ -569,8 +569,6 @@ class ReportGenerator:
         if date_str is None:
             date_str = datetime.now().strftime("%Y-%m-%d")
 
-        summary = self.tracker.get_daily_summary(date_str)
-
         conn = self._get_connection()
         try:
             # Get detailed run list for the day
@@ -580,6 +578,34 @@ class ReportGenerator:
             # Build query with optional agent scoping
             agent_filter = "AND sr.agent_id = ?" if agent_id is not None else ""
             agent_params = (agent_id,) if agent_id is not None else ()
+
+            summary_row = conn.execute(
+                f"""
+                SELECT
+                    COUNT(*) as total_runs,
+                    SUM(CASE WHEN sr.status = 'completed' THEN 1 ELSE 0 END) as completed_runs,
+                    SUM(CASE WHEN sr.status = 'failed' THEN 1 ELSE 0 END) as failed_runs,
+                    SUM(sr.total_items) as total_items,
+                    SUM(sr.successful_items) as successful_items,
+                    SUM(sr.failed_items) as failed_items
+                FROM syndication_runs sr
+                WHERE sr.started_at >= ? AND sr.started_at < ? {agent_filter}
+                """,
+                (start_ts, end_ts) + agent_params
+            ).fetchone()
+
+            platform_rows = conn.execute(
+                f"""
+                SELECT si.target_platform,
+                       COUNT(*) as count,
+                       SUM(CASE WHEN si.status = 'success' THEN 1 ELSE 0 END) as successful
+                FROM syndication_items si
+                JOIN syndication_runs sr ON si.run_id = sr.id
+                WHERE sr.started_at >= ? AND sr.started_at < ? {agent_filter}
+                GROUP BY si.target_platform
+                """,
+                (start_ts, end_ts) + agent_params
+            ).fetchall()
 
             runs = conn.execute(
                 f"""
@@ -626,14 +652,20 @@ class ReportGenerator:
                 "date": date_str,
                 "generated_at": time.time(),
                 "scope": "agent" if agent_id is not None else "network",
-                "summary": summary or {
-                    "total_runs": 0,
-                    "completed_runs": 0,
-                    "failed_runs": 0,
-                    "total_items": 0,
-                    "successful_items": 0,
-                    "failed_items": 0,
-                    "platforms": {}
+                "summary": {
+                    "total_runs": summary_row["total_runs"] or 0,
+                    "completed_runs": summary_row["completed_runs"] or 0,
+                    "failed_runs": summary_row["failed_runs"] or 0,
+                    "total_items": summary_row["total_items"] or 0,
+                    "successful_items": summary_row["successful_items"] or 0,
+                    "failed_items": summary_row["failed_items"] or 0,
+                    "platforms": {
+                        row["target_platform"]: {
+                            "count": row["count"],
+                            "successful": row["successful"] or 0,
+                        }
+                        for row in platform_rows
+                    }
                 },
                 "runs": run_details
             }
@@ -733,15 +765,19 @@ class ReportGenerator:
             else:
                 agent_stats = []
 
-            # Daily breakdown
+            # Daily breakdown must respect agent scoping, so compute it from runs.
             daily_breakdown = conn.execute(
-                """
-                SELECT date, total_runs, completed_runs, successful_items
-                FROM syndication_daily_summary
-                WHERE date >= ? AND date <= ?
+                f"""
+                SELECT DATE(datetime(sr.started_at, 'unixepoch')) as date,
+                       COUNT(*) as total_runs,
+                       SUM(CASE WHEN sr.status = 'completed' THEN 1 ELSE 0 END) as completed_runs,
+                       SUM(sr.successful_items) as successful_items
+                FROM syndication_runs sr
+                WHERE sr.started_at >= ? AND sr.started_at < ? {agent_filter}
+                GROUP BY DATE(datetime(sr.started_at, 'unixepoch'))
                 ORDER BY date
                 """,
-                (start_date, end_date)
+                (start_ts, end_ts) + agent_params
             ).fetchall()
 
             return {
