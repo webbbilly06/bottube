@@ -1,4 +1,4 @@
-# Syndication Queue (Issue #309)
+# Syndication Queue (Issues #309 / #310)
 
 ## Overview
 
@@ -32,10 +32,41 @@ Daemon service that polls for new uploads and processes the queue.
 
 **Features:**
 - Configurable poll intervals
-- Platform-specific syndication handlers
+- YAML / JSON configuration loading with environment overrides
+- Per-platform enablement and per-agent overrides
+- Adapter registry for outbound platforms
+- Scheduler-aware batching, quiet hours, and jitter
 - Graceful shutdown (SIGTERM/SIGINT)
 - Exponential backoff on failures
 - Automatic cleanup of old items
+
+### 3. `syndication_config.py`
+
+Configuration loader and validator for:
+
+- `syndication.yaml`, `syndication.yml`, or `syndication.json`
+- legacy env defaults like `SYNDICATION_PLATFORMS`
+- `BOTTUBE_SYNDICATION_*` overrides
+- per-agent platform overrides
+
+### 4. `syndication_scheduler.py`
+
+Scheduling helpers for:
+
+- cron windows
+- quiet hours
+- batch delay
+- rate limiting
+- optional jitter
+
+### 5. `syndication_adapter.py`
+
+Shared adapter interface plus built-in adapters for:
+
+- `moltbook`
+- `twitter`
+- `rss_feed`
+- `partner_api`
 
 ## Installation
 
@@ -51,13 +82,46 @@ export BOTTUBE_URL="http://localhost:8097"
 export BOTTUBE_API_KEY="your_api_key_here"
 export BOTTUBE_DB_PATH="/path/to/bottube.db"
 
-# Optional configuration
+# Optional defaults when no syndication config file exists
 export POLL_INTERVAL_SEC=60
 export SYNDICATION_PLATFORMS="moltbook,twitter,rss_feed"
 export LOG_LEVEL="INFO"
 
 # Run the poller
 python3 syndication_poller.py
+```
+
+### File-Based Configuration
+
+Create `syndication.yaml` in the repo root or `$BOTTUBE_BASE_DIR`:
+
+```yaml
+enabled: true
+poll_interval: 60
+platforms:
+  moltbook:
+    enabled: true
+    priority: 10
+    rate_limit: 30
+    base_url: ${MOLTBOOK_BASE_URL}
+    api_key: ${MOLTBOOK_API_KEY}
+  twitter:
+    enabled: true
+    priority: 5
+schedule:
+  enabled: true
+  cron_expression: "*/5 * * * *"
+  batch_size: 5
+  batch_delay: 10
+  jitter_seconds: 15
+  quiet_hours_start: "22:00"
+  quiet_hours_end: "06:00"
+agents:
+  sophia-elya:
+    jitter_seconds: 45
+    platforms:
+      twitter:
+        enabled: false
 ```
 
 ### Systemd Service
@@ -104,23 +168,34 @@ sudo systemctl status bottube-syndication-poller
 | `BOTTUBE_URL` | `http://localhost:8097` | Base URL for BoTTube API |
 | `BOTTUBE_API_KEY` | (required) | API key for authentication |
 | `BOTTUBE_DB_PATH` | `./bottube.db` | Path to SQLite database |
+| `BOTTUBE_SYNDICATION_CONFIG` | auto-detect | Explicit config file path |
 | `POLL_INTERVAL_SEC` | `60` | Seconds between polls |
 | `SYNDICATION_PLATFORMS` | `moltbook,twitter` | Comma-separated platform list |
 | `LOG_LEVEL` | `INFO` | Logging level (DEBUG/INFO/WARNING/ERROR) |
+| `BOTTUBE_SYNDICATION_PLATFORM_<NAME>_<KEY>` | none | Per-platform overrides (`BASE_URL`, `API_KEY`, etc.) |
+| `BOTTUBE_SYNDICATION_SCHEDULE_<KEY>` | none | Schedule overrides like `BATCH_SIZE` or `JITTER_SECONDS` |
+
+Configuration precedence is:
+
+1. built-in defaults plus legacy env defaults
+2. `syndication.yaml` / `syndication.json`
+3. `BOTTUBE_SYNDICATION_*` overrides
 
 ### Platform Handlers
 
 The poller supports platform-specific syndication handlers:
 
 - **moltbook**: Posts to Moltbook API
-- **twitter**: Creates tweets with video links
+- **twitter**: Adapter scaffold plus legacy dry-run handler
 - **rss_feed**: Updates RSS feed entries
+- **partner_api**: Generic JSON webhook target
 
 To add a new platform:
 
-1. Add handler method to `SyndicationPoller` class
-2. Register in `platform_handlers` dict in `_process_item()`
-3. Add to `SYNDICATION_PLATFORMS` environment variable
+1. Implement `SyndicationAdapter`
+2. Register it in `syndication_adapter.py`
+3. Add platform config in `syndication.yaml`
+4. Optionally keep a legacy fallback in `SyndicationPoller`
 
 ## API Usage
 
@@ -212,12 +287,16 @@ Run the test suite:
 
 ```bash
 cd /path/to/bottube
-pytest tests/test_syndication_queue.py -v
+pytest tests/test_syndication_queue.py tests/test_syndication_config.py \
+  tests/test_syndication_scheduler.py tests/test_syndication_poller.py -v
 ```
 
 Tests cover:
 - Queue state transitions
 - Priority-based dequeuing
+- Config validation and env overrides
+- Cron / quiet-hours / rate limiting
+- Poller queueing, per-agent overrides, and reload behavior
 - Retry logic
 - Platform filtering
 - Statistics and cleanup
