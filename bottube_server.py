@@ -112,6 +112,10 @@ AVATAR_TARGET_SIZE = 256  # 256x256
 ALLOWED_VIDEO_EXT = {".mp4", ".webm", ".avi", ".mkv", ".mov"}
 ALLOWED_THUMB_EXT = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
 COMMENT_TYPES = {"comment", "critique"}
+RECOVERY_RECLAIM_ENABLED = os.environ.get("BOTTUBE_RECOVERY_RECLAIM", "1").strip().lower() not in {"0", "false", "no"}
+RECOVERY_STAGE_LABEL = os.environ.get("BOTTUBE_RECOVERY_STAGE", "stage13").strip() or "stage13"
+RECOVERY_TARGET_TOTAL_VIEWS = int(str(os.environ.get("BOTTUBE_RECOVERY_TARGET_VIEWS", "65600")).replace(",", ""))
+RECOVERY_RESTORED_VIEWS_FALLBACK = int(str(os.environ.get("BOTTUBE_RECOVERY_RESTORED_VIEWS", "29581")).replace(",", ""))
 REFERRAL_TRACKS = {"human", "agent", "both"}
 REFERRAL_BONUS_THRESHOLDS = (3, 5, 10)
 FOUNDING_BADGE_LIMIT = 25
@@ -1315,6 +1319,41 @@ app.jinja_env.globals["P"] = IP_PREFIX  # default fallback
 app.jinja_env.globals["MAX_DURATION"] = MAX_VIDEO_DURATION
 app.jinja_env.globals["_"] = _translate
 app.jinja_env.globals["SUPPORTED_LOCALES"] = SUPPORTED_LOCALES
+
+
+def _build_recovery_notice(db=None):
+    if not RECOVERY_RECLAIM_ENABLED:
+        return None
+    restored_views = RECOVERY_RESTORED_VIEWS_FALLBACK
+    if db is not None:
+        try:
+            restored_views = int(
+                db.execute(
+                    """SELECT COALESCE(SUM(v.views), 0) FROM videos v
+                       JOIN agents a ON v.agent_id = a.id
+                       WHERE v.is_removed = 0 AND COALESCE(a.is_banned, 0) = 0"""
+                ).fetchone()[0]
+            )
+        except sqlite3.Error:
+            restored_views = RECOVERY_RESTORED_VIEWS_FALLBACK
+    return {
+        "enabled": True,
+        "stage": RECOVERY_STAGE_LABEL,
+        "restored_views": restored_views,
+        "target_views": RECOVERY_TARGET_TOTAL_VIEWS,
+        "remaining_views": max(RECOVERY_TARGET_TOTAL_VIEWS - restored_views, 0),
+    }
+
+
+@app.context_processor
+def inject_recovery_notice():
+    notice = None
+    if RECOVERY_RECLAIM_ENABLED:
+        try:
+            notice = _build_recovery_notice(get_db())
+        except Exception:
+            notice = _build_recovery_notice(None)
+    return {"recovery_notice": notice}
 
 
 @app.before_request
@@ -4559,6 +4598,21 @@ def claim_page(agent_name, token):
         "verified": bool(agent["claimed"]),
         "message": f"This is the BoTTube claim page for @{agent_name}.",
     })
+
+
+@app.route("/reclaim")
+def reclaim_account_page():
+    notice = None
+    try:
+        notice = _build_recovery_notice(get_db())
+    except Exception:
+        notice = _build_recovery_notice(None)
+    return render_template(
+        "reclaim_account.html",
+        recovery_notice=notice,
+        recovery_stage=RECOVERY_STAGE_LABEL,
+        support_email=os.environ.get("BOTTUBE_RECLAIM_EMAIL", "scott@elyanlabs.ai"),
+    )
 
 
 # ---------------------------------------------------------------------------

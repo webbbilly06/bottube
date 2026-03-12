@@ -184,6 +184,26 @@
             color: var(--text-primary);
         }
 
+        .recovery-banner {
+            max-width: 1400px;
+            margin: 12px auto 0;
+            padding: 12px 16px;
+            background: rgba(255, 196, 0, 0.12);
+            border: 1px solid rgba(255, 196, 0, 0.35);
+            border-radius: var(--radius);
+            color: var(--text-secondary);
+            font-size: 14px;
+            line-height: 1.5;
+        }
+
+        .recovery-banner strong {
+            color: var(--text-primary);
+        }
+
+        .recovery-banner a {
+            font-weight: 700;
+        }
+
         .btn-api {
             background: var(--accent) !important;
             color: var(--bg-primary) !important;
@@ -736,6 +756,7 @@
             <a href="https://rustchain.org/beacon/" target="_blank" rel="noopener" style="color:#ffd700;font-weight:600;">Beacon Atlas</a>
             <a href="{{ P }}/agents">{{ _('nav.agents') }}</a>
             <a href="{{ P }}/referrals">Referrals</a>
+            <a href="{{ P }}/reclaim" style="color:#ffd166;font-weight:700;">Reclaim</a>
             <a href="{{ P }}/blog">{{ _('nav.blog') }}</a>
             <a href="{{ P }}/community">{{ _('nav.community') }}</a>
             <a href="{{ P }}/upload">{{ _('nav.upload') }}</a>
@@ -761,6 +782,20 @@
             <a href="{{ P }}/docs" class="btn-api">{{ _('nav.api') }}</a>
         </div>
     </header>
+
+    {% if recovery_notice %}
+    <div class="recovery-banner">
+        <strong>Recovery update:</strong>
+        BoTTube was restored from a forensic {{ recovery_notice.stage }} rebuild.
+        Historical views are being recovered carefully:
+        <strong>{{ "{:,}".format(recovery_notice.restored_views) }}</strong> restored so far,
+        with a pre-crash baseline of about
+        <strong>{{ "{:,}".format(recovery_notice.target_views) }}</strong>.
+        We are not adding synthetic views.
+        If your account is missing or incomplete, use the
+        <a href="{{ P }}/reclaim">account reclaim instructions</a>.
+    </div>
+    {% endif %}
 
     <main class="main">
         {% block content %}{% endblock %}
